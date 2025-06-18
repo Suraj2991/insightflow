@@ -1,0 +1,240 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Organizations (Tenants)
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique // For subdomain: acme.insightflow.com
+  plan      String   @default("free") // free, pro, enterprise
+  domain    String?  // Custom domain support
+  settings  String   @default("{}")   // Org-level settings (JSON string)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  users            User[]
+  workflows        Workflow[]
+  sessions         Session[]
+  questionnaires   Questionnaire[]
+  documentConfigs  DocumentConfig[]
+  promptConfigs    PromptConfig[]
+  llmConfigs       LlmConfig[]
+  findingsConfigs  FindingsConfig[]
+  reportConfigs    ReportConfig[]
+  qaConfigs        QaConfig[]
+
+  @@map("organizations")
+}
+
+// Users with organization context
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  name           String
+  organizationId String   @map("organization_id")
+  role           String   @default("user") // admin, user, viewer
+  passwordHash   String   @map("password_hash")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdWorkflows Workflow[] @relation("WorkflowCreator")
+  sessions         Session[]
+
+  @@map("users")
+}
+
+// Workflows (scoped to organization)
+model Workflow {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  name           String
+  domain         String
+  isActive       Boolean  @default(true) @map("is_active")
+  createdById    String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User?        @relation("WorkflowCreator", fields: [createdById], references: [id])
+  sessions       Session[]
+  questionnaires Questionnaire[]
+
+  // Ensure unique workflow names per organization
+  @@unique([organizationId, name])
+  @@map("workflows")
+}
+
+// User sessions (scoped to organization)
+model Session {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  userId         String?  @map("user_id") // Optional: track who started session
+  status         String   @default("active")
+  metadata       String   @default("{}")  // JSON string
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@map("sessions")
+}
+
+// Module 2: Questionnaires (multi-tenant)
+model Questionnaire {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  title          String
+  description    String?
+  config         String   // JSON structure for questions
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  responses    Response[]
+
+  // Ensure one questionnaire per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("questionnaires")
+}
+
+// Questionnaire responses
+model Response {
+  id              String        @id @default(cuid())
+  sessionId       String        @map("session_id")
+  questionnaireId String        @map("questionnaire_id")
+  answers         String        // JSON structure for answers
+  completedAt     DateTime?     @map("completed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  questionnaire Questionnaire @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+
+  @@map("responses")
+}
+
+// Module 3: Document Configurations
+model DocumentConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for document types and requirements
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one document config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("document_configs")
+}
+
+// Module 4: Prompt Templates
+model PromptConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for prompts
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one prompt config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("prompt_configs")
+}
+
+// Module 5: LLM Configurations
+model LlmConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for LLM settings
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one LLM config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("llm_configs")
+}
+
+// Module 6: Findings Configurations
+model FindingsConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for findings extraction settings
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one findings config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("findings_configs")
+}
+
+// Module 7: Report Configurations (convert from in-memory to database)
+model ReportConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for report settings
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one report config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("report_configs")
+}
+
+// Module 8: QA Configurations
+model QaConfig {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  workflowId     String   @map("workflow_id")
+  config         String   // JSON structure for Q&A settings
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  // Ensure one QA config per workflow per organization
+  @@unique([organizationId, workflowId])
+  @@map("qa_configs")
+}
